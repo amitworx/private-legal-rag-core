@@ -7,8 +7,38 @@ import { v4 as uuidv4 } from "uuid";
 import { createEmbedding } from "./ollama";
 import type { DocumentChunk } from "./types";
 
-const pdfParse = (pdfParseModule as unknown as { default?: (buffer: Buffer) => Promise<{ text: string }> }).default
-  ?? (pdfParseModule as unknown as (buffer: Buffer) => Promise<{ text: string }>);
+type LegacyPdfParseFn = (buffer: Buffer) => Promise<{ text: string }>;
+type PdfParseClass = new (options: { data: Buffer }) => {
+  getText: () => Promise<{ text?: string }>;
+  destroy?: () => Promise<void>;
+};
+
+const legacyPdfParse = (
+  pdfParseModule as unknown as { default?: LegacyPdfParseFn }
+).default ?? (pdfParseModule as unknown as LegacyPdfParseFn);
+
+const PdfParseCtor = (pdfParseModule as unknown as { PDFParse?: PdfParseClass }).PDFParse;
+
+async function parsePdf(buffer: Buffer): Promise<string> {
+  if (typeof legacyPdfParse === "function") {
+    const parsed = await legacyPdfParse(buffer);
+    return parsed.text;
+  }
+
+  if (typeof PdfParseCtor === "function") {
+    const parser = new PdfParseCtor({ data: buffer });
+    try {
+      const parsed = await parser.getText();
+      return parsed.text ?? "";
+    } finally {
+      if (typeof parser.destroy === "function") {
+        await parser.destroy();
+      }
+    }
+  }
+
+  throw new Error("Unsupported pdf-parse module shape.");
+}
 
 const CHUNK_SIZE = 1800;
 const CHUNK_OVERLAP = 250;
@@ -40,8 +70,7 @@ async function parseByMime(filePath: string, mimeType: string): Promise<string> 
 
   if (lower.includes("pdf") || ext === ".pdf") {
     const buffer = await fs.readFile(filePath);
-    const parsed = await pdfParse(buffer);
-    return parsed.text;
+    return parsePdf(buffer);
   }
 
   if (

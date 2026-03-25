@@ -15,7 +15,13 @@ import {
 import { closeDb, initDb, pool } from "./db";
 import { processDocument } from "./documentParser";
 import { readMemory, updateMemoryMarkdown } from "./memoryStore";
-import { createEmbedding, listModels, ollama } from "./ollama";
+import {
+  assertEmbeddingModelAvailable,
+  createEmbedding,
+  listModels,
+  MissingEmbeddingModelError,
+  ollama
+} from "./ollama";
 import { selectContext } from "./retrieval";
 import type { AuthUser, ChatPayload, ContextSelection, UploadedDocument } from "./types";
 
@@ -36,7 +42,12 @@ app.use(express.json({ limit: "4mb" }));
 type RequestWithAuth = Request & { authUser?: AuthUser };
 
 function isPublicApiPath(pathname: string): boolean {
-  return pathname === "/health" || pathname === "/auth/config" || pathname === "/auth/login";
+  return (
+    pathname === "/health"
+    || pathname === "/auth/config"
+    || pathname === "/auth/login"
+    || pathname === "/system/readiness"
+  );
 }
 
 function getRequestUser(req: Request): AuthUser | undefined {
@@ -117,6 +128,29 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/auth/config", (_req, res) => {
   res.json({ enabled: authEnabled });
+});
+
+app.get("/api/system/readiness", async (_req, res) => {
+  try {
+    const models = await listModels();
+    const hasEmbeddingModel = models.some(
+      (model) => model === "nomic-embed-text" || model.startsWith("nomic-embed-text:")
+    );
+
+    res.json({
+      ok: true,
+      uploadReady: hasEmbeddingModel,
+      missing: hasEmbeddingModel ? [] : ["embeddingModel"],
+      details: hasEmbeddingModel ? [] : ["Missing embedding model 'nomic-embed-text'. Run: ollama pull nomic-embed-text"]
+    });
+  } catch (error) {
+    res.status(200).json({
+      ok: false,
+      uploadReady: false,
+      missing: ["ollama"],
+      details: [`Unable to reach Ollama at ${process.env.OLLAMA_BASE_URL ?? "http://localhost:11434"}: ${String(error)}`]
+    });
+  }
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -225,6 +259,7 @@ app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
   const user = getRequestUser(req);
 
   try {
+    await assertEmbeddingModelAvailable();
     const processed = await processDocument(req.file.path, req.file.mimetype, parsedDir);
 
     const document: UploadedDocument = {
@@ -266,6 +301,14 @@ app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
       chunkCount: processed.chunkCount
     });
   } catch (error) {
+    if (error instanceof MissingEmbeddingModelError) {
+      res.status(400).json({
+        error: "Failed to process the uploaded document.",
+        details: error.message
+      });
+      return;
+    }
+
     res.status(500).json({ error: "Failed to process the uploaded document.", details: String(error) });
   }
 });

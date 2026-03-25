@@ -42,6 +42,7 @@ This file documents the current components, service modules, and routes used in 
 Primary UI component handling:
 
 - Auth config check and login flow
+- System readiness check for upload prerequisites
 - Document upload action
 - Model/document/session selectors
 - Context mode controls:
@@ -65,6 +66,7 @@ Internal module-level helpers in this file:
 Data-fetching functions in this file:
 
 - `initializeAuth()`
+- `initializeSystemReadiness()`
 - `login()`
 - `fetchModels()`
 - `fetchDocuments()`
@@ -72,6 +74,10 @@ Data-fetching functions in this file:
 - `fetchMessages(sessionId)`
 - `uploadFile(file)`
 - `sendQuestion()`
+
+Error/readiness helpers in this file:
+
+- `formatError(error)`
 
 ### `frontend/src/styles.css`
 
@@ -115,6 +121,7 @@ Key internal functions:
 ### `backend/src/documentParser.ts`
 
 - File-type parsing logic (PDF, DOCX, image OCR, text)
+- PDF parser compatibility for both legacy function and class-based `pdf-parse` APIs
 - Chunking strategy
 - Embedding generation per chunk
 - Parsed artifact writing (`.txt`, chunk JSON, memory markdown)
@@ -133,6 +140,8 @@ Key internal functions:
 - Ollama client setup
 - Model list call
 - Embedding generation helper
+- Embedding model availability assertion
+- Dedicated missing-model error type for actionable upload responses
 
 ### `backend/src/memoryStore.ts`
 
@@ -149,17 +158,23 @@ Key internal functions:
 
 ## 5) Backend API routes
 
-Base URL: `http://localhost:4000`
+Base URL: `http://localhost:4001`
 
 Notes:
 
-- All routes below `/api/*` are protected when auth is enabled, except `/api/health`, `/api/auth/config`, and `/api/auth/login`.
+- All routes below `/api/*` are protected when auth is enabled, except `/api/health`, `/api/auth/config`, `/api/auth/login`, and `/api/system/readiness`.
 - Ownership enforcement is implemented in SQL joins against `documents.owner_user_id`.
 
 ### Health
 
 - `GET /api/health`
   - Purpose: service liveness check
+
+### System readiness
+
+- `GET /api/system/readiness`
+  - Purpose: report whether upload prerequisites are satisfied (Ollama reachable + embedding model installed)
+  - Used by UI to surface warning and disable upload when prerequisites are missing
 
 ### Authentication
 
@@ -205,6 +220,8 @@ Notes:
   - Content type: multipart/form-data
   - Field: `file`
   - Purpose: upload source file and trigger parse/chunk/embed workflow
+  - Preflight: verifies embedding model availability before heavy ingestion work
+  - Missing model behavior: returns 400 with actionable remediation message
   - Ownership behavior:
     - when auth enabled, uploaded document is linked to the authenticated user
 

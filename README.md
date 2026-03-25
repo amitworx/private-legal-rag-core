@@ -33,7 +33,7 @@ cd ../frontend && npm install && npm run dev
 Open:
 
 - Frontend: `http://localhost:5173`
-- Backend: `http://localhost:4000`
+- Backend: `http://localhost:4001`
 
 ## Table of Contents
 
@@ -240,7 +240,7 @@ npm install
 npm run dev
 ```
 
-Backend default URL: `http://localhost:4000`
+Backend default URL: `http://localhost:4001`
 
 If `AUTH_ENABLED=true`, log in from the UI using `AUTH_USERNAME` and `AUTH_PASSWORD` values from `backend/.env`.
 
@@ -259,10 +259,10 @@ Frontend default URL: `http://localhost:5173`
 Backend env variables (`backend/.env`):
 
 ```env
-PORT=4000
+PORT=4001
 OLLAMA_BASE_URL=http://localhost:11434
 POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+POSTGRES_PORT=5433
 POSTGRES_DB=rag_llm
 POSTGRES_USER=rag_user
 POSTGRES_PASSWORD=rag_pass
@@ -276,7 +276,8 @@ JWT_EXPIRES_IN=12h
 
 Optional frontend env variable:
 
-- `VITE_API_URL` (defaults to `http://localhost:4000`)
+- `VITE_API_URL` (optional override; by default frontend uses same-origin `/api` with Vite proxy in dev)
+- `VITE_BACKEND_URL` (dev proxy target override for Vite; defaults to `http://localhost:4001`)
 
 Authentication notes:
 
@@ -312,7 +313,7 @@ Each document has a markdown memory file in backend parsed storage. After every 
 
 ## API Reference
 
-Base URL: `http://localhost:4000`
+Base URL: `http://localhost:4001`
 
 When authentication is enabled, send `Authorization: Bearer <token>` for protected routes.
 
@@ -322,6 +323,16 @@ For a full route ownership matrix and module-level map, see `structure.md`.
 
 - `GET /api/health`
   - Response: `{ "ok": true }`
+
+### System Readiness
+
+- `GET /api/system/readiness`
+  - Returns readiness information used by the UI before uploads.
+  - Response shape:
+    - `ok` (boolean): whether readiness checks could run
+    - `uploadReady` (boolean): whether uploads can proceed
+    - `missing` (string[]): missing dependency categories
+    - `details` (string[]): actionable diagnostics
 
 ### Models
 
@@ -349,6 +360,8 @@ For a full route ownership matrix and module-level map, see `structure.md`.
     - `documentId`
     - `sessionId`
     - `chunkCount`
+  - If embedding model is missing, returns 400 with guidance to run:
+    - `ollama pull nomic-embed-text`
 
 ### Sessions and Messages
 
@@ -420,6 +433,12 @@ Filesystem runtime artifacts:
 - Confirm embedding model is available: `ollama list`.
 - Check backend logs for parsing/OCR/model errors.
 - Try smaller `maxChars` first.
+
+### Upload fails with PDF parser error
+
+- Ensure dependencies are installed in `backend`: `npm install`.
+- Restart backend dev server after dependency changes: `npm run dev`.
+- Current parser supports both legacy and class-based `pdf-parse` APIs.
 
 ### PostgreSQL connection errors
 

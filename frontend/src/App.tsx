@@ -44,6 +44,12 @@ interface LoginResponse {
   enabled: boolean;
 }
 
+interface SystemReadinessResponse {
+  ok: boolean;
+  uploadReady: boolean;
+  details?: string[];
+}
+
 interface DocumentRecord {
   id: string;
   name: string;
@@ -66,15 +72,44 @@ interface MessageRecord {
   createdAt: string;
 }
 
-const baseURL = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+const baseURL = import.meta.env.VITE_API_URL ?? "/";
 
 const api = axios.create({
   baseURL
 });
 
 const publicApi = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:4000"
+  baseURL: import.meta.env.VITE_API_URL ?? "/"
 });
+
+function formatError(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const responseData = error.response?.data as
+      | { error?: string; details?: string }
+      | string
+      | undefined;
+
+    if (typeof responseData === "string") {
+      return responseData;
+    }
+
+    if (responseData?.error && responseData?.details) {
+      return `${responseData.error} ${responseData.details}`;
+    }
+
+    if (responseData?.error) {
+      return responseData.error;
+    }
+
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
 
 function downloadTextFile(filename: string, content: string): void {
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -137,6 +172,7 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState("");
+  const [uploadReadinessWarning, setUploadReadinessWarning] = useState("");
 
   function applyToken(nextToken: string): void {
     if (nextToken) {
@@ -165,6 +201,23 @@ export default function App() {
     }
   }
 
+  async function initializeSystemReadiness(): Promise<void> {
+    try {
+      const { data } = await publicApi.get<SystemReadinessResponse>("/api/system/readiness");
+      if (!data.uploadReady) {
+        setUploadReadinessWarning(
+          data.details?.[0]
+            ?? "Upload is not ready. Ensure Ollama is running and nomic-embed-text is installed."
+        );
+        return;
+      }
+
+      setUploadReadinessWarning("");
+    } catch (err) {
+      setUploadReadinessWarning(formatError(err));
+    }
+  }
+
   async function login(): Promise<void> {
     setError("");
     setIsLoggingIn(true);
@@ -181,7 +234,7 @@ export default function App() {
       }
       setPassword("");
     } catch (err) {
-      setError(String(err));
+      setError(formatError(err));
     } finally {
       setIsLoggingIn(false);
     }
@@ -229,6 +282,7 @@ export default function App() {
 
   useEffect(() => {
     void initializeAuth();
+    void initializeSystemReadiness();
   }, []);
 
   useEffect(() => {
@@ -241,7 +295,7 @@ export default function App() {
     }
 
     Promise.all([fetchModels(), fetchDocuments()]).catch((err) => {
-      setError(String(err));
+      setError(formatError(err));
       if (String(err).includes("401")) {
         applyToken("");
       }
@@ -252,14 +306,14 @@ export default function App() {
     if (!selectedDocument) {
       return;
     }
-    fetchSessions(selectedDocument).catch((err) => setError(String(err)));
+    fetchSessions(selectedDocument).catch((err) => setError(formatError(err)));
   }, [selectedDocument]);
 
   useEffect(() => {
     if (!selectedSession) {
       return;
     }
-    fetchMessages(selectedSession).catch((err) => setError(String(err)));
+    fetchMessages(selectedSession).catch((err) => setError(formatError(err)));
   }, [selectedSession]);
 
   async function uploadFile(file: File): Promise<void> {
@@ -280,7 +334,7 @@ export default function App() {
       setSelectedDocument(data.documentId);
       setSelectedSession(data.sessionId);
     } catch (err) {
-      setError(String(err));
+      setError(formatError(err));
     } finally {
       setIsUploading(false);
     }
@@ -315,7 +369,7 @@ export default function App() {
       }
       setQuestion("");
     } catch (err) {
-      setError(String(err));
+      setError(formatError(err));
     } finally {
       setIsSending(false);
     }
@@ -348,6 +402,7 @@ export default function App() {
         </Typography>
 
         {error && <Alert severity="error">{error}</Alert>}
+        {uploadReadinessWarning && <Alert severity="warning">{uploadReadinessWarning}</Alert>}
 
         {authReady && authEnabled && !token && (
           <Card sx={{ mb: 2, maxWidth: 520 }}>
@@ -386,7 +441,7 @@ export default function App() {
                     variant="contained"
                     component="label"
                     startIcon={<UploadFileIcon />}
-                    disabled={isUploading}
+                    disabled={isUploading || Boolean(uploadReadinessWarning)}
                   >
                     {isUploading ? "Uploading..." : "Upload Document"}
                     <input
