@@ -24,6 +24,7 @@ import DescriptionIcon from "@mui/icons-material/Description";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import axios from "axios";
+import dayjs from "dayjs";
 import { Document, Packer, Paragraph } from "docx";
 import { saveAs } from "file-saver";
 import { jsPDF } from "jspdf";
@@ -81,6 +82,11 @@ const api = axios.create({
 const publicApi = axios.create({
   baseURL: import.meta.env.VITE_API_URL ?? "/"
 });
+
+function isLikelyEmbeddingModel(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return normalized.includes("embed") || normalized.includes("embedding");
+}
 
 function formatError(error: unknown): string {
   if (axios.isAxiosError(error)) {
@@ -149,6 +155,19 @@ function downloadPdf(filename: string, lines: string[]): void {
   pdf.save(filename);
 }
 
+function formatSessionLabel(session: SessionRecord): string {
+  const fallbackTime = dayjs(session.updatedAt || session.createdAt);
+  const formattedTime = fallbackTime.isValid()
+    ? fallbackTime.format("MMM D, YYYY h:mm A")
+    : session.id.slice(0, 8);
+
+  if (!session.title || session.title === "Default Session") {
+    return `Session ${formattedTime}`;
+  }
+
+  return session.title;
+}
+
 export default function App() {
   const [authEnabled, setAuthEnabled] = useState(false);
   const [authReady, setAuthReady] = useState(false);
@@ -173,6 +192,11 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState("");
   const [uploadReadinessWarning, setUploadReadinessWarning] = useState("");
+
+  const chatModels = useMemo(
+    () => models.filter((model) => !isLikelyEmbeddingModel(model)),
+    [models]
+  );
 
   function applyToken(nextToken: string): void {
     if (nextToken) {
@@ -248,11 +272,17 @@ export default function App() {
     [messages]
   );
 
+  const selectedDocumentName = useMemo(
+    () => documents.find((doc) => doc.id === selectedDocument)?.name ?? "No document selected",
+    [documents, selectedDocument]
+  );
+
   async function fetchModels(): Promise<void> {
     const { data } = await api.get<ModelResponse>("/api/models");
     setModels(data.models);
-    if (!selectedModel && data.models[0]) {
-      setSelectedModel(data.models[0]);
+    const firstChatModel = data.models.find((model) => !isLikelyEmbeddingModel(model));
+    if ((!selectedModel || isLikelyEmbeddingModel(selectedModel)) && firstChatModel) {
+      setSelectedModel(firstChatModel);
     }
   }
 
@@ -342,6 +372,11 @@ export default function App() {
 
   async function sendQuestion(): Promise<void> {
     if (!question.trim() || !selectedDocument || !selectedModel) {
+      return;
+    }
+
+    if (isLikelyEmbeddingModel(selectedModel)) {
+      setError("Selected model does not support chat. Please choose a chat-capable model.");
       return;
     }
 
@@ -482,7 +517,7 @@ export default function App() {
                     >
                       {sessions.map((session) => (
                         <MenuItem key={session.id} value={session.id}>
-                          {session.title}
+                          {formatSessionLabel(session)}
                         </MenuItem>
                       ))}
                     </Select>
@@ -496,13 +531,19 @@ export default function App() {
                       value={selectedModel}
                       onChange={(event) => setSelectedModel(event.target.value)}
                     >
-                      {models.map((model) => (
+                      {chatModels.map((model) => (
                         <MenuItem key={model} value={model}>
                           {model}
                         </MenuItem>
                       ))}
                     </Select>
                   </FormControl>
+
+                  {chatModels.length === 0 && (
+                    <Alert severity="warning">
+                      No chat-capable model found. Pull one in Ollama (for example, llama3.1:8b).
+                    </Alert>
+                  )}
 
                   <ToggleButtonGroup
                     value={contextMode}
@@ -630,6 +671,10 @@ export default function App() {
                     {isSending ? <CircularProgress size={18} color="inherit" /> : "Send"}
                   </Button>
                 </Stack>
+
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                  Asking about: {selectedDocumentName}
+                </Typography>
               </CardContent>
             </Card>
           </Grid>

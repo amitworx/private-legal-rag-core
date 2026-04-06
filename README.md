@@ -76,12 +76,13 @@ Key goals:
   - Images (OCR via Tesseract)
   - TXT
   - DOC/DOCX/ODT (raw text extraction)
-- Ollama model picker in the UI
+- Ollama chat-model picker in the UI (embedding-only models are excluded from chat)
 - Context modes:
-  - Semantic retrieval (`topK` chunks)
+  - Semantic retrieval with lexical fallback for short precision queries (`topK` chunks)
   - Chunk range (`fromChunk` to `toChunk`)
   - Full-context mode with configurable max characters
 - Persistent chat sessions and messages in PostgreSQL
+- Timestamp-based session titles and readable legacy session labels in the UI
 - Per-document markdown memory file auto-appended after each Q/A turn
 - Copy assistant responses to clipboard
 - Export chat transcript as:
@@ -303,7 +304,7 @@ Extracted text is split into overlapping chunks for retrieval quality. Each chun
 
 ### Context selection modes
 
-- Semantic: retrieves top-N most similar chunks to the user query
+- Semantic: retrieves top-N most similar chunks and blends lexical keyword matches when needed
 - Range: deterministic chunk window for manual control
 - Full: pushes large contiguous context up to selected character cap
 
@@ -366,7 +367,7 @@ For a full route ownership matrix and module-level map, see `structure.md`.
 ### Sessions and Messages
 
 - `GET /api/documents/:documentId/sessions`
-  - Lists sessions for a document
+  - Lists sessions for a document (new sessions are created with timestamp-based titles)
 
 - `GET /api/sessions/:sessionId/messages`
   - Lists messages for a session
@@ -374,6 +375,8 @@ For a full route ownership matrix and module-level map, see `structure.md`.
 ### Chat
 
 - `POST /api/chat/:documentId`
+  - Returns 400 when a selected model is not chat-capable
+  - Returns 502 when Ollama is unreachable
 
 Request body example:
 
@@ -431,6 +434,9 @@ Filesystem runtime artifacts:
 ### Upload works but chat fails
 
 - Confirm embedding model is available: `ollama list`.
+- Confirm a chat-capable model is selected (for example, `llama3.1:8b`).
+- Confirm the intended document is selected in the UI before sending.
+- If you receive a "Failed to reach Ollama" error, restart or relaunch Ollama.
 - Check backend logs for parsing/OCR/model errors.
 - Try smaller `maxChars` first.
 
@@ -600,7 +606,7 @@ Internet
 ## Roadmap
 
 - Streaming token responses in UI
-- Session rename/create/delete in UI
+- Session rename/delete in UI
 - Better retrieval indexing for very large corpora
 - Background ingestion queue and progress tracking
 - Optional auth layer for multi-user deployments

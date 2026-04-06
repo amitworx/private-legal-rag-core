@@ -29,6 +29,7 @@ dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT ?? "4000");
+const ollamaBaseUrl = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 const authEnabled = isAuthEnabled();
 const dataDir = path.resolve(process.cwd(), "data");
 const uploadsDir = path.join(dataDir, "uploads");
@@ -86,6 +87,11 @@ function sanitizeContext(selection?: Partial<ContextSelection>): ContextSelectio
   };
 }
 
+function buildSessionTitle(date = new Date()): string {
+  const stamp = date.toISOString().slice(0, 16).replace("T", " ");
+  return `Session ${stamp} UTC`;
+}
+
 async function ensureSession(
   documentId: string,
   incomingSessionId: string | undefined,
@@ -116,7 +122,7 @@ async function ensureSession(
   const sessionId = uuidv4();
   await pool.query(
     "INSERT INTO chat_sessions (id, document_id, title) VALUES ($1, $2, $3)",
-    [sessionId, documentId, "Default Session"]
+    [sessionId, documentId, buildSessionTitle()]
   );
 
   return sessionId;
@@ -148,7 +154,7 @@ app.get("/api/system/readiness", async (_req, res) => {
       ok: false,
       uploadReady: false,
       missing: ["ollama"],
-      details: [`Unable to reach Ollama at ${process.env.OLLAMA_BASE_URL ?? "http://localhost:11434"}: ${String(error)}`]
+      details: [`Unable to reach Ollama at ${ollamaBaseUrl}: ${String(error)}`]
     });
   }
 });
@@ -292,7 +298,7 @@ app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
     const sessionId = uuidv4();
     await pool.query(
       "INSERT INTO chat_sessions (id, document_id, title) VALUES ($1, $2, $3)",
-      [sessionId, document.id, "Default Session"]
+      [sessionId, document.id, buildSessionTitle()]
     );
 
     res.status(201).json({
@@ -355,7 +361,12 @@ app.post("/api/chat/:documentId", async (req, res) => {
   try {
     const sessionId = await ensureSession(documentId, payload.sessionId, user);
     const queryEmbedding = await createEmbedding(payload.message);
-    const contextText = await selectContext(doc.chunksPath, contextSelection, queryEmbedding);
+    const contextText = await selectContext(
+      doc.chunksPath,
+      contextSelection,
+      queryEmbedding,
+      payload.message
+    );
     const memoryText = await readMemory(doc.memoryPath);
 
     const systemPrompt = [
@@ -410,6 +421,25 @@ app.post("/api/chat/:documentId", async (req, res) => {
       context: contextSelection
     });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const normalizedMessage = errorMessage.toLowerCase();
+
+    if (normalizedMessage.includes("does not support chat")) {
+      res.status(400).json({
+        error: "Selected model does not support chat.",
+        details: "Choose a chat-capable model (for example, llama3.1:8b)."
+      });
+      return;
+    }
+
+    if (normalizedMessage.includes("fetch failed")) {
+      res.status(502).json({
+        error: "Failed to reach Ollama.",
+        details: `Cannot connect to Ollama at ${ollamaBaseUrl}. Ensure the Ollama app/service is running.`
+      });
+      return;
+    }
+
     res.status(500).json({ error: "Failed to generate response.", details: String(error) });
   }
 });

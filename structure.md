@@ -44,7 +44,7 @@ Primary UI component handling:
 - Auth config check and login flow
 - System readiness check for upload prerequisites
 - Document upload action
-- Model/document/session selectors
+- Model/document/session selectors with chat-model filtering and readable session labels
 - Context mode controls:
   - semantic
   - range
@@ -78,6 +78,8 @@ Data-fetching functions in this file:
 Error/readiness helpers in this file:
 
 - `formatError(error)`
+- `isLikelyEmbeddingModel(model)`
+- `formatSessionLabel(session)`
 
 ### `frontend/src/styles.css`
 
@@ -103,6 +105,7 @@ Key internal functions:
 - `requireAuth(req, res, next)`
 - `sanitizeContext(selection)`
 - `ensureSession(documentId, incomingSessionId)`
+- `buildSessionTitle(date)`
 - `bootstrap()`
 
 ### `backend/src/db.ts`
@@ -130,8 +133,9 @@ Key internal functions:
 
 - Chunk loading from JSON
 - Cosine similarity scoring
+- Query tokenization and lexical keyword scoring fallback
 - Context selection logic for:
-  - semantic retrieval
+  - semantic retrieval (hybrid semantic + lexical fallback)
   - explicit range
   - full-context mode
 
@@ -202,6 +206,7 @@ Notes:
 
 - `GET /api/documents/:documentId/sessions`
   - Purpose: list chat sessions for a document
+  - Session title behavior: new sessions default to timestamp-based names
   - Authorization behavior:
     - `admin`: all sessions for the document
     - `user`: only if the document is owned by the user
@@ -229,6 +234,9 @@ Notes:
 
 - `POST /api/chat/:documentId`
   - Purpose: ask question using selected model and selected context mode
+  - Error behavior:
+    - returns 400 for non-chat-capable model selection
+    - returns 502 when Ollama is unreachable
   - Side effects:
     - stores user and assistant messages
     - updates session timestamp
